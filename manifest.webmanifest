@@ -1,0 +1,9 @@
+{
+  "name": "어근 원정대 · 영어 단어",
+  "short_name": "어근 원정대",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#E9EDF2",
+  "theme_color": "#1F5FA8",
+  "icons": [{ "src": "icon-180.png", "sizes": "180x180", "type": "image/png" }]
+}
