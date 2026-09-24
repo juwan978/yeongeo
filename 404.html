@@ -485,6 +485,7 @@ function screenHome() {
     <div>
       <div class="top">
         <div class="brand">어근 원정대 <span>Day 9–16</span></div>
+        <button class="iconbtn" id="toReport" aria-label="틀린 문제 리포트">📋</button>
         <button class="iconbtn" id="toList" aria-label="단어장">📖</button>
         <button class="iconbtn" id="toSet" aria-label="설정">⚙</button>
       </div>
@@ -520,6 +521,7 @@ function screenHome() {
     card.onclick = () => screenDay(d);
     grid.append(card);
   });
+  document.getElementById('toReport').onclick = screenReport;
   document.getElementById('toList').onclick = () => screenList(null);
   document.getElementById('toSet').onclick = screenSettings;
 }
@@ -829,6 +831,7 @@ function finish(dead) {
         <button class="btn" id="toDay">Day ${d}로</button>
       </div>
       <button class="btn ghost" id="toHome" style="margin-top:9px">방향 지도로</button>
+      <button class="btn ghost" id="toRep" style="margin-top:9px">📋 틀린 문제 리포트</button>
     </div>`));
 
   if (g.missed.length) {
@@ -846,7 +849,119 @@ function finish(dead) {
   document.getElementById('again').onclick = () => startGame(d, mode);
   document.getElementById('toDay').onclick = () => { G = null; screenDay(d); };
   document.getElementById('toHome').onclick = () => { G = null; screenHome(); };
+  document.getElementById('toRep').onclick = () => { G = null; screenReport(); };
   G = null;
+}
+
+/* ---------- 약점 리포트 ---------- */
+// rec.a = 그 단어를 푼 횟수, rec.w = 틀린 횟수 (둘 다 누적)
+const KINDNAME = { pre: '접두사', root: '어근', phr: '구동사', poly: '다의어', theme: '주제 어휘', etc: '기타' };
+
+function tally(list) {
+  let tries = 0, wrong = 0;
+  for (const it of list) { const r = store.rec[it.i]; tries += r.a || 0; wrong += r.w || 0; }
+  return { tries, wrong, rate: tries ? Math.round((tries - wrong) / tries * 100) : null };
+}
+function groupRows(pool, keyFn, minTries) {
+  const map = new Map();
+  for (const it of pool) {
+    const k = keyFn(it);
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(it);
+  }
+  const rows = [];
+  for (const [k, list] of map) {
+    const t = tally(list);
+    if (t.tries >= (minTries || 1)) rows.push({ k, list, ...t });
+  }
+  rows.sort((a, b) => (a.rate - b.rate) || (b.wrong - a.wrong));   // 약한 것이 위로
+  return rows;
+}
+function rateBar(rate) {
+  const c = rate >= 80 ? 'var(--ok)' : rate >= 60 ? 'var(--warn)' : 'var(--bad)';
+  return '<span style="display:inline-block;width:46px;height:6px;border-radius:99px;background:var(--rule-2);vertical-align:middle">' +
+    '<span style="display:block;width:' + Math.max(rate, 3) + '%;height:100%;border-radius:99px;background:' + c + '"></span></span>';
+}
+// 아직 못 외운 단어: 틀린 적이 있고 아직 외우지 못한 것, 많이 틀린 순
+const missedWords = () => W.filter(it => store.rec[it.i].w > 0 && !mastered(it))
+  .sort((a, b) => store.rec[b.i].w - store.rec[a.i].w || a.d - b.d);
+
+function screenReport() {
+  stopTimer();
+  const all = tally(W);
+  const miss = missedWords();
+  app.innerHTML = '';
+  app.append($(`
+    <div>
+      <div class="listhead">
+        <button class="iconbtn" id="back" aria-label="뒤로">←</button>
+        <div style="flex:1">
+          <h2>틀린 문제 리포트</h2>
+          <div class="sub">어디서 자꾸 틀리는지 모아 봤어요</div>
+        </div>
+      </div>
+      ${all.tries
+      ? `<div class="overall">
+             <div>
+               <div class="num mono">${all.rate}%</div>
+               <div class="sub">${all.tries}번 풀어서 ${all.wrong}번 틀렸어요</div>
+             </div>
+             <div class="rail"><i style="width:${Math.max(all.rate, 1)}%"></i></div>
+           </div>`
+      : '<div class="empty">아직 푼 문제가 없어요.<br>한 판 풀고 나면 여기에 약점이 정리됩니다.</div>'}
+      <div id="rbody"></div>
+    </div>`));
+  document.getElementById('back').onclick = screenHome;
+  const body = document.getElementById('rbody');
+  if (!all.tries) return;
+
+  const section = (title, rows, labelFn, id) => {
+    if (!rows.length) return;
+    body.append($(`<div class="kicker">${esc(title)}</div>`));
+    const box = $(`<div${id ? ` id="${id}"` : ''} style="display:flex;flex-direction:column;gap:6px"></div>`);
+    rows.forEach(r => box.append($(
+      `<div class="chip" style="cursor:default">${labelFn(r)}` +
+      `<span class="n">${rateBar(r.rate)} ${r.rate}% · ${r.wrong}/${r.tries}</span></div>`)));
+    body.append(box);
+  };
+
+  const dayRows = DAYS.map(d => ({ d, ...tally(byDay[d]) }))
+    .filter(r => r.tries).sort((a, b) => a.rate - b.rate);
+  section('Day별 — 약한 곳이 위로', dayRows,
+    r => `<span style="width:9px;height:9px;border-radius:99px;background:${famColor(r.d)};display:inline-block"></span>` +
+      `<span>Day ${r.d} ${esc(DAYMETA[r.d].dir)}</span>`, 'rdays');
+
+  section('종류별', groupRows(W, it => KINDNAME[it.k] || '기타'), r => `<span>${esc(r.k)}</span>`);
+  section('약한 묶음 (3번 이상 푼 것)', groupRows(W, it => `Day ${it.d} · ${it.g}`, 3).slice(0, 8),
+    r => `<span>${esc(r.k)}</span>`);
+
+  body.append($(`<div class="kicker">아직 못 외운 단어 ${miss.length}개</div>`));
+  if (!miss.length) {
+    body.append($('<div class="empty">없어요. 틀린 단어를 다 잡았습니다.</div>'));
+  } else {
+    const list = $('<div class="list"></div>');
+    miss.forEach(it => list.append($(`
+      <div class="row">
+        <span class="lw">${esc(it.w)}</span>
+        <span class="lm">${esc(it.m)}</span>
+        <span class="mast" style="color:var(--bad)">✕${store.rec[it.i].w}</span>
+      </div>`)));
+    body.append(list);
+  }
+
+  const share = $('<button class="btn" id="rshare" style="margin-top:16px">아빠에게 보내기</button>');
+  share.onclick = () => shareReport(share);
+  body.append(share);
+  // 오답 사냥이 실제로 열리는 Day가 있을 때만 바로가기를 보여 준다
+  const huntable = DAYS.filter(d => wrongPool(d).length >= 4)
+    .sort((a, b) => wrongPool(b).length - wrongPool(a).length)[0];
+  if (huntable) {
+    const again = $(`<button class="btn ghost" id="rhunt" style="margin-top:9px">🎯 Day ${huntable} 오답 사냥 바로 가기 (${wrongPool(huntable).length}개)</button>`);
+    again.onclick = () => startGame(huntable, 'wrong');
+    body.append(again);
+  } else if (miss.length) {
+    body.append($('<div class="note">한 Day에서 틀린 단어가 4개 이상 모이면 그 Day에 «오답 사냥»이 열려요.</div>'));
+  }
 }
 
 /* ---------- 단어장 ---------- */
@@ -951,7 +1066,7 @@ function screenSettings() {
         <div class="stat"><div class="v">${wrongAll.length}</div><div class="l">못 외운 것</div></div>
         <div class="stat"><div class="v">${Object.keys(store.boss).length}</div><div class="l">정복한 Day</div></div>
       </div>
-      <button class="btn ghost" id="report" style="margin-bottom:9px">📋 아빠에게 진도 보내기</button>
+      <button class="btn ghost" id="report" style="margin-bottom:9px">📋 틀린 문제 리포트 보기</button>
       <div class="kicker">처음부터</div>
       <button class="btn ghost" id="reset" style="color:var(--bad);border-color:var(--bad)">기록 모두 지우기</button>
       <div class="note">${HAS_STORE ? '기록은 이 아이패드 안에만 저장돼요.' :
@@ -963,7 +1078,7 @@ function screenSettings() {
     if (SOUND) dingdong();
     screenSettings();
   };
-  document.getElementById('report').onclick = shareReport;
+  document.getElementById('report').onclick = screenReport;
   document.getElementById('reset').onclick = () => {
     if (!confirm('정말 모든 기록을 지울까요? 되돌릴 수 없어요.')) return;
     store = { rec: {}, best: {}, boss: {}, sound: SOUND ? 1 : 0 };
@@ -973,39 +1088,63 @@ function screenSettings() {
 }
 
 function reportText() {
+  const all = tally(W);
   const L = [];
-  L.push('[영어 단어 · 어근 원정대 진도]');
-  L.push(`정복률 ${allPct()}% · 완전히 외운 단어 ${W.filter(mastered).length}개 / ${W.length}개`);
+  L.push('[영어 단어 · 어근 원정대]');
+  if (!all.tries) { L.push('아직 푼 문제가 없습니다.'); return L.join('\n'); }
+  L.push(`정답률 ${all.rate}% — ${all.tries}번 풀어서 ${all.wrong}번 틀림`);
+  L.push(`정복률 ${allPct()}% · 완전히 외운 단어 ${W.filter(mastered).length} / ${W.length}개`);
+
   L.push('');
-  L.push('■ Day별');
-  DAYS.forEach(d => {
-    const b = store.best[d];
-    L.push(`  Day ${d} ${DAYMETA[d].dir} — ${dayPct(d)}%` +
-      (b ? ` · 최고 ${b.score.toLocaleString()}점 ${'★'.repeat(b.stars)}` : '') +
-      (store.boss[d] ? ' 👑' : ''));
-  });
-  const weak = W.filter(it => store.rec[it.i].w > 0 && !mastered(it))
-    .sort((a, b) => store.rec[b.i].w - store.rec[a.i].w);
+  L.push('■ Day별 (약한 곳이 위로)');
+  DAYS.map(d => ({ d, ...tally(byDay[d]) })).filter(r => r.tries)
+    .sort((a, b) => a.rate - b.rate)
+    .forEach(r => {
+      const b = store.best[r.d];
+      L.push(`  Day ${r.d} ${DAYMETA[r.d].dir} — 정답률 ${r.rate}% (${r.wrong}/${r.tries} 틀림) · 정복 ${dayPct(r.d)}%` +
+        (b ? ` · 최고 ${b.score.toLocaleString()}점 ${'★'.repeat(b.stars)}` : '') +
+        (store.boss[r.d] ? ' 👑' : ''));
+    });
+
+  const kinds = groupRows(W, it => KINDNAME[it.k] || '기타');
+  if (kinds.length) {
+    L.push('');
+    L.push('■ 종류별');
+    kinds.forEach(r => L.push(`  ${r.k} — ${r.rate}% (${r.wrong}/${r.tries} 틀림)`));
+  }
+
+  const weakG = groupRows(W, it => `Day ${it.d} · ${it.g}`, 3).slice(0, 5);
+  if (weakG.length) {
+    L.push('');
+    L.push('■ 약한 묶음 (3번 이상 푼 것 중)');
+    weakG.forEach(r => L.push(`  ${r.k} — ${r.rate}%`));
+  }
+
+  const weak = missedWords();
   L.push('');
   L.push(`■ 아직 못 외운 단어 ${weak.length}개`);
   weak.slice(0, 50).forEach((it, i) => {
-    L.push(`  ${i + 1}) ${it.w} — ${it.m}  (${store.rec[it.i].w}번 틀림)`);
+    L.push(`  ${i + 1}) ${it.w} — ${it.m}  (${store.rec[it.i].w}번 틀림, Day ${it.d})`);
   });
   if (weak.length > 50) L.push(`  … 외 ${weak.length - 50}개`);
   return L.join('\n');
 }
 
-async function shareReport() {
+async function shareReport(btnEl) {
   const txt = reportText();
-  const btn = document.getElementById('report');
-  try { if (navigator.share) { await navigator.share({ title: '영어 단어 진도', text: txt }); return; } }
+  const btn = btnEl || document.getElementById('report') || document.getElementById('rshare');
+  const label = btn ? btn.textContent : '';
+  try { if (navigator.share) { await navigator.share({ title: '영어 단어 · 틀린 문제', text: txt }); return; } }
   catch (e) { if (e && e.name === 'AbortError') return; }
   try {
     await navigator.clipboard.writeText(txt);
-    btn.textContent = '복사했어요 · 카톡에 붙여넣기';
-    setTimeout(() => { btn.textContent = '📋 아빠에게 진도 보내기'; }, 2500);
+    if (btn) {
+      btn.textContent = '복사했어요 · 카톡에 붙여넣기';
+      setTimeout(() => { btn.textContent = label; }, 2500);
+    }
     return;
   } catch (e) { }
+  if (!btn) return;
   const ta = $(`<textarea style="width:100%;height:220px;font-size:12px;font-family:monospace;margin-top:10px;
     border:1px solid var(--rule);border-radius:10px;padding:10px;background:var(--card);color:var(--ink)"></textarea>`);
   ta.value = txt;
